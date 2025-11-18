@@ -1,5 +1,5 @@
 """
-speech_lab1.py
+speech_lab1.py  (fixed)
 
 Reusable code for Speech Processing Lab (OEL-1)
 
@@ -12,6 +12,7 @@ import numpy as np
 import librosa
 import librosa.display
 import matplotlib.pyplot as plt
+from scipy.linalg import toeplitz
 from typing import Dict,Tuple,List
 
 # =========================
@@ -53,11 +54,10 @@ def create_synthetic_dataset(sr:int=16000,duration:float=0.6
     """
     Returns:
         {
-          "spk1":{"aa":sig,...},
-          "spk2":{"aa":sig,...}
+          "speaker_1":{"aa":sig,...},
+          "speaker_2":{"aa":sig,...}
         }
     Speakers differ mainly in pitch (F0) and slightly in formants.
-    You can replace this later with real recordings if you want.
     """
     # approximate formant sets (Hz) for male/female-ish voices
     vowels={
@@ -128,6 +128,24 @@ def visualize_sample(sig:np.ndarray,sr:int,title:str="")->None:
 # Q3 – spectrum, formants, harmonics
 # =========================
 
+def lpc_coeffs(frame:np.ndarray,order:int)->np.ndarray:
+    """
+    Compute LPC coefficients using autocorrelation + Yule-Walker equations.
+    Returns array a of length order+1 (a[0] = 1).
+    """
+    # autocorrelation of frame
+    r=np.correlate(frame,frame,mode="full")
+    r=r[len(frame)-1:len(frame)+order]   # r[0..order]
+
+    # Toeplitz covariance matrix and RHS
+    R=toeplitz(r[:-1])   # (order x order)
+    rhs=-r[1:]
+
+    # solve for LPC coefficients a[1:]
+    a_rest=np.linalg.solve(R,rhs)
+    a=np.concatenate(([1.0],a_rest))
+    return a
+
 def estimate_formants_lpc(sig:np.ndarray,sr:int,
                           lpc_order:int=12,
                           n_formants:int=3)->List[float]:
@@ -145,8 +163,9 @@ def estimate_formants_lpc(sig:np.ndarray,sr:int,
     start=mid-win_len//2
     frame=sig[start:start+win_len]*np.hamming(win_len)
 
-    # LPC
-    a=librosa.lpc(frame,lpc_order)
+    # LPC (our own implementation)
+    a=lpc_coeffs(frame,lpc_order)
+
     roots=np.roots(a)
     roots=roots[np.imag(roots)>=0.01]
 
@@ -193,20 +212,21 @@ def plot_spectrum_with_formants(sig:np.ndarray,sr:int,
     Returns (formant_list,harmonic_list).
     """
     freqs,mag=spectrum(sig,sr)
-    formants=estimate_formants_lpc(sig,sr,n_formants=n_formants)
+    formants=estimate_formants_lpc(sig,sr,lpc_order=12,n_formants=n_formants)
     f0,harmonics=estimate_f0_and_harmonics(sig,sr,max_harmonics=max_harmonics)
 
     plt.figure(figsize=(10,4))
     plt.plot(freqs,mag,label="Spectrum")
 
-    # Harmonics
+    # Harmonics (grey dashed)
     for h in harmonics:
         plt.axvline(h,color="gray",linestyle="--",alpha=0.6)
 
-    # Formants
+    # Formants (red dashed, with labels)
+    max_mag=max(mag)
     for i,f in enumerate(formants,1):
         plt.axvline(f,color="red",linestyle="--")
-        plt.text(f,1.02*max(mag),
+        plt.text(f,1.02*max_mag,
                  f"F{i}={f:.0f} Hz",
                  rotation=90,verticalalignment="bottom",
                  color="red")
@@ -232,7 +252,7 @@ if __name__=="__main__":
     sr=16000
     dataset=create_synthetic_dataset(sr=sr,duration=0.6)
 
-    # --- Q1: show what we created ---
+    # --- Q1: what did we create? ---
     for spk,words in dataset.items():
         print(spk,"->",list(words.keys()))
 
